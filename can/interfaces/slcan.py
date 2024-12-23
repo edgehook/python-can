@@ -85,7 +85,7 @@ class slcanBus(BusABC):
             If this argument is set then it overrides the bitrate and btr arguments. The
             `f_clock` value of the timing instance must be set to 8_000_000 (8MHz)
             for standard CAN.
-            CAN FD and the :class:`~can.BitTimingFd` class are not supported.
+            CAN FD and the :class:`~can.BitTimingFd`.
         :param poll_interval:
             Poll interval in seconds when reading messages
         :param sleep_after_open:
@@ -141,9 +141,8 @@ class slcanBus(BusABC):
                 timing = check_or_adjust_timing_clock(timing, valid_clocks=[8_000_000])
                 self.set_bitrate_reg(f"{timing.btr0:02X}{timing.btr1:02X}")
             elif isinstance(timing, BitTimingFd):
-                raise NotImplementedError(
-                    f"CAN FD is not supported by {self.__class__.__name__}."
-                )
+                timing = check_or_adjust_timing_clock(timing, valid_clocks=[60_000_000])
+                self._set_bit_timing_fd(timing)
             else:
                 if bitrate is not None and btr is not None:
                     raise ValueError("Bitrate and btr mutually exclusive.")
@@ -154,6 +153,15 @@ class slcanBus(BusABC):
             self.open()
 
         super().__init__(channel, **kwargs)
+
+    def _set_bit_timing_fd(self, timing: BitTimingFd) -> None:
+        nomStr = f"P{timing.nom_sjw:04d}{timing.nom_tseg1:04d}{timing.nom_tseg2:04d}{timing.nom_brp:04d}"
+        dataStr = f"p{timing.data_sjw:04d}{timing.data_tseg1:04d}{timing.data_tseg2:04d}{timing.data_brp:04d}"
+		
+        self.close()
+        self._write(nomStr)
+        self._write(dataStr)
+        self.open()
 
     def set_bitrate(self, bitrate: int) -> None:
         """
@@ -226,12 +234,34 @@ class slcanBus(BusABC):
     def close(self) -> None:
         self._write("C")
 
+    def decode_hex_dlc(self, hex_dlc: str) -> int:
+        hex_dlc = hex_dlc.upper()
+        if hex_dlc.isdigit():
+            num = int(hex_dlc)
+            if 0 <= num <= 8:
+                return num
+        elif hex_dlc == '9':
+            return 12
+        elif hex_dlc == 'A':
+            return 16
+        elif hex_dlc == 'B':
+            return 20
+        elif hex_dlc == 'C':
+            return 24
+        elif hex_dlc == 'D':
+            return 32
+        elif hex_dlc == 'E':
+            return 48
+        return 64
+
     def _recv_internal(
         self, timeout: Optional[float]
     ) -> Tuple[Optional[Message], bool]:
         canId = None
         remote = False
         extended = False
+        is_fd = False
+        bitrate_switch = False
         data = None
 
         string = self._read(timeout)
@@ -263,6 +293,34 @@ class slcanBus(BusABC):
             dlc = int(string[9])
             extended = True
             remote = True
+        elif string[0] == "d":
+            # Standard CAN FD data frame
+            canId = int(string[1:4], 16)
+            dlc = self.decode_hex_dlc(string[4])
+            data = bytearray.fromhex(string[5 : 5 + dlc * 2])
+            is_fd = True
+        elif string[0] == "D":
+            # Extended CAN FD data frame
+            canId = int(string[1:9], 16)
+            dlc = self.decode_hex_dlc(string[9])
+            data = bytearray.fromhex(string[10 : 10 + dlc * 2])
+            extended = True
+            is_fd = True
+        elif string[0] == "b":
+            # CANFD Flexible Data Frame
+            canId = int(string[1:4], 16)
+            dlc = self.decode_hex_dlc(string[4])
+            data = bytearray.fromhex(string[5 : 5 + dlc * 2])
+            is_fd = True
+            bitrate_switch = True
+        elif string[0] == "B":
+            # Extended CANFD Flexible Data Frame
+            canId = int(string[1:9], 16)
+            dlc = self.decode_hex_dlc(string[9])
+            data = bytearray.fromhex(string[10 : 10 + dlc * 2])
+            is_fd = True
+            bitrate_switch = True
+            extended = True
 
         if canId is not None:
             msg = Message(
@@ -270,26 +328,60 @@ class slcanBus(BusABC):
                 is_extended_id=extended,
                 timestamp=time.time(),  # Better than nothing...
                 is_remote_frame=remote,
+                is_fd=is_fd,
+                bitrate_switch=bitrate_switch,
                 dlc=dlc,
                 data=data,
             )
             return msg, False
         return None, False
 
+    def encode_dlc_hex(self, data_length: int) -> str:
+        if 0 <= data_length <= 8:
+            return format(data_length, 'X')
+        elif data_length == 12:
+            return '9'
+        elif data_length == 16:
+            return 'A'
+        elif data_length == 20:
+            return 'B'
+        elif data_length == 24:
+            return 'C'
+        elif data_length == 32:
+            return 'D'
+        elif data_length == 48:
+            return 'E'
+        else:
+            return 'F'
+
     def send(self, msg: Message, timeout: Optional[float] = None) -> None:
         if timeout != self.serialPortOrig.write_timeout:
             self.serialPortOrig.write_timeout = timeout
-        if msg.is_remote_frame:
-            if msg.is_extended_id:
-                sendStr = f"R{msg.arbitration_id:08X}{msg.dlc:d}"
+		
+        if msg.is_fd:
+            if msg.bitrate_switch:
+                if msg.is_extended_id:
+                    sendStr = f"B{msg.arbitration_id:08X}{self.encode_dlc_hex(msg.dlc)}"
+                else:
+                    sendStr = f"b{msg.arbitration_id:03X}{self.encode_dlc_hex(msg.dlc)}"
             else:
-                sendStr = f"r{msg.arbitration_id:03X}{msg.dlc:d}"
-        else:
-            if msg.is_extended_id:
-                sendStr = f"T{msg.arbitration_id:08X}{msg.dlc:d}"
-            else:
-                sendStr = f"t{msg.arbitration_id:03X}{msg.dlc:d}"
+                if msg.is_extended_id:
+                    sendStr = f"D{msg.arbitration_id:08X}{self.encode_dlc_hex(msg.dlc)}"
+                else:
+                    sendStr = f"d{msg.arbitration_id:03X}{self.encode_dlc_hex(msg.dlc)}"
             sendStr += msg.data.hex().upper()
+        else:
+            if msg.is_remote_frame:
+                if msg.is_extended_id:
+                    sendStr = f"R{msg.arbitration_id:08X}{msg.dlc:d}"
+                else:
+                    sendStr = f"r{msg.arbitration_id:03X}{msg.dlc:d}"
+            else:
+                if msg.is_extended_id:
+                    sendStr = f"T{msg.arbitration_id:08X}{msg.dlc:d}"
+                else:
+                    sendStr = f"t{msg.arbitration_id:03X}{msg.dlc:d}"
+                sendStr += msg.data.hex().upper()
         self._write(sendStr)
 
     def shutdown(self) -> None:
