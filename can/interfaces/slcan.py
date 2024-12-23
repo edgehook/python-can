@@ -351,25 +351,28 @@ class slcanBus(BusABC):
             return 'D'
         elif data_length == 48:
             return 'E'
-        else:
-            return 'F'
+        return 'F'
 
     def send(self, msg: Message, timeout: Optional[float] = None) -> None:
         if timeout != self.serialPortOrig.write_timeout:
             self.serialPortOrig.write_timeout = timeout
 		
         if msg.is_fd:
+            dlc_hex = self.encode_dlc_hex(msg.dlc)
             if msg.bitrate_switch:
                 if msg.is_extended_id:
-                    sendStr = f"B{msg.arbitration_id:08X}{self.encode_dlc_hex(msg.dlc)}"
+                    sendStr = f"B{msg.arbitration_id:08X}{dlc_hex}"
                 else:
-                    sendStr = f"b{msg.arbitration_id:03X}{self.encode_dlc_hex(msg.dlc)}"
+                    sendStr = f"b{msg.arbitration_id:03X}{dlc_hex}"
             else:
                 if msg.is_extended_id:
-                    sendStr = f"D{msg.arbitration_id:08X}{self.encode_dlc_hex(msg.dlc)}"
+                    sendStr = f"D{msg.arbitration_id:08X}{dlc_hex}"
                 else:
-                    sendStr = f"d{msg.arbitration_id:03X}{self.encode_dlc_hex(msg.dlc)}"
+                    sendStr = f"d{msg.arbitration_id:03X}{dlc_hex}"
             sendStr += msg.data.hex().upper()
+            if dlc_hex == 'F' and msg.dlc < 64:
+                padding = '00' * (64 - msg.dlc)
+                sendStr += padding
         else:
             if msg.is_remote_frame:
                 if msg.is_extended_id:
