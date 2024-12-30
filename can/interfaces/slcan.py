@@ -199,26 +199,27 @@ class slcanBus(BusABC):
         _timeout = serial.Timeout(timeout)
 
         with error_check("Could not read from serial device"):
-            while True:
+            while not _timeout.expired():
+                ok_index = self._buffer.find(self._OK)
+                error_index = self._buffer.find(self._ERROR)
+                if error_index != -1 or ok_index != -1:
+                    first_marker_index = (
+                        min(idx for idx in [error_index, ok_index] if idx != -1)
+                    )
+
+                    string = self._buffer[: first_marker_index + 1].decode()
+                    self._buffer = bytearray(self._buffer[first_marker_index + 1 :])
+                    return string
                 # Due to accessing `serialPortOrig.in_waiting` too often will reduce the performance.
                 # We read the `serialPortOrig.in_waiting` only once here.
                 in_waiting = self.serialPortOrig.in_waiting
-                for _ in range(max(1, in_waiting)):
-                    new_byte = self.serialPortOrig.read(size=1)
-                    if new_byte:
-                        self._buffer.extend(new_byte)
-                    else:
-                        break
+                if in_waiting > 0:
+                    new_bytes = self.serialPortOrig.read(size=in_waiting)
+                    self._buffer.extend(new_bytes)
+                else:
+                    time.sleep(0.001)
 
-                    if new_byte in (self._ERROR, self._OK):
-                        string = self._buffer.decode()
-                        self._buffer.clear()
-                        return string
-
-                if _timeout.expired():
-                    break
-
-            return None
+        return None
 
     def flush(self) -> None:
         self._buffer.clear()
@@ -240,8 +241,8 @@ class slcanBus(BusABC):
             num = int(hex_dlc)
             if 0 <= num <= 8:
                 return num
-        elif hex_dlc == '9':
-            return 12
+            elif num == 9:
+                return 12
         elif hex_dlc == 'A':
             return 16
         elif hex_dlc == 'B':

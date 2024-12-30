@@ -8,16 +8,12 @@ device = 'COM13'
 # for standard CAN
 #baud_rate = 500000  # Set the appropriate baud rate for your setup
 # for CANFD timing ; nom bitrate = 1M, data bitrate = 5M 
-timing_fd = BitTimingFd(
-	f_clock=60_000_000,
-	nom_brp=1,
-	nom_tseg1=44,
-	nom_tseg2=15,
-	nom_sjw=1,
-	data_brp=1,
-	data_tseg1=8,
-	data_tseg2=3,
-	data_sjw=1,
+timing_fd = BitTimingFd.from_sample_point(
+    f_clock=60_000_000,
+    nom_bitrate=1_000_000,
+    nom_sample_point=0.8,
+    data_bitrate=5_000_000,
+    data_sample_point=0.75,
 )
 # Create a CAN bus instance using the SLCAN interface
 bus = can.Bus(interface='slcan', channel=device, timing=timing_fd)
