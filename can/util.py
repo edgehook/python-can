@@ -1,6 +1,8 @@
 """
 Utilities and configuration file parsing.
 """
+
+import contextlib
 import copy
 import functools
 import json
@@ -43,7 +45,7 @@ REQUIRED_KEYS = ["interface", "channel"]
 
 CONFIG_FILES = ["~/can.conf"]
 
-if platform.system() == "Linux":
+if platform.system() in ("Linux", "Darwin"):
     CONFIG_FILES.extend(["/etc/can.conf", "~/.can", "~/.canrc"])
 elif platform.system() == "Windows" or platform.python_implementation() == "IronPython":
     CONFIG_FILES.extend(["can.ini", os.path.join(os.getenv("APPDATA", ""), "can.ini")])
@@ -68,7 +70,7 @@ def load_file_config(
     config = ConfigParser()
 
     # make sure to not transform the entries such that capitalization is preserved
-    config.optionxform = lambda entry: entry  # type: ignore
+    config.optionxform = lambda optionstr: optionstr  # type: ignore[method-assign]
 
     if path is None:
         config.read([os.path.expanduser(path) for path in CONFIG_FILES])
@@ -190,9 +192,8 @@ def load_config(
     )
 
     # Slightly complex here to only search for the file config if required
-    for cfg in config_sources:
-        if callable(cfg):
-            cfg = cfg(context)
+    for _cfg in config_sources:
+        cfg = _cfg(context) if callable(_cfg) else _cfg
         # remove legacy operator (and copy to interface if not already present)
         if "bustype" in cfg:
             if "interface" not in cfg or not cfg["interface"]:
@@ -243,29 +244,40 @@ def _create_bus_config(config: Dict[str, Any]) -> typechecking.BusConfig:
         if not 0 < port < 65535:
             raise ValueError("Port config must be inside 0-65535 range!")
 
-    if config.get("timing", None) is None:
-        try:
-            if set(typechecking.BitTimingFdDict.__annotations__).issubset(config):
-                config["timing"] = can.BitTimingFd(
-                    **{
-                        key: int(config[key])
-                        for key in typechecking.BitTimingFdDict.__annotations__
-                    }
-                )
-            elif set(typechecking.BitTimingDict.__annotations__).issubset(config):
-                config["timing"] = can.BitTiming(
-                    **{
-                        key: int(config[key])
-                        for key in typechecking.BitTimingDict.__annotations__
-                    }
-                )
-        except (ValueError, TypeError):
-            pass
+    if "timing" not in config:
+	timing = _dict2timing(config)
+        if timing:
+            config["timing"] = timing
 
     if "fd" in config:
         config["fd"] = config["fd"] not in (0, False)
 
     return cast(typechecking.BusConfig, config)
+
+
+def _dict2timing(data: Dict[str, Any]) -> Union[BitTiming, BitTimingFd, None]:
+    """Try to instantiate a :class:`~can.BitTiming` or :class:`~can.BitTimingFd` from
+    a dictionary. Return `None` if not possible."""
+
+    with contextlib.suppress(ValueError, TypeError):
+        if set(typechecking.BitTimingFdDict.__annotations__).issubset(data):
+            return BitTimingFd(
+                **{
+                    key: int(data[key])
+                    for key in typechecking.BitTimingFdDict.__annotations__
+                },
+                strict=False,
+            )
+        elif set(typechecking.BitTimingDict.__annotations__).issubset(data):
+            return BitTiming(
+                **{
+                    key: int(data[key])
+                    for key in typechecking.BitTimingDict.__annotations__
+                },
+                strict=False,
+            )
+
+    return None
 
 
 def set_logging_level(level_name: str) -> None:
@@ -410,7 +422,7 @@ def _rename_kwargs(
                     )
                 kwargs[new] = value
 
-            warnings.warn(deprecation_notice, DeprecationWarning)
+            warnings.warn(deprecation_notice, DeprecationWarning, stacklevel=3)
 
 
 T2 = TypeVar("T2", BitTiming, BitTimingFd)
@@ -443,7 +455,8 @@ def check_or_adjust_timing_clock(timing: T2, valid_clocks: Iterable[int]) -> T2:
             adjusted_timing = timing.recreate_with_f_clock(clock)
             warnings.warn(
                 f"Adjusted f_clock in {timing.__class__.__name__} from "
-                f"{timing.f_clock} to {adjusted_timing.f_clock}"
+                f"{timing.f_clock} to {adjusted_timing.f_clock}",
+                stacklevel=2,
             )
             return adjusted_timing
         except ValueError:
@@ -505,11 +518,3 @@ def cast_from_string(string_val: str) -> Union[str, int, float, bool]:
 
     # value is string
     return string_val
-
-
-if __name__ == "__main__":
-    print("Searching for configuration named:")
-    print("\n".join(CONFIG_FILES))
-    print()
-    print("Settings:")
-    print(load_config())

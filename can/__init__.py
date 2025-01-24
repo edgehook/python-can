@@ -5,7 +5,9 @@ different hardware devices, and a suite of utilities for sending and receiving
 messages on a can bus.
 """
 
+import contextlib
 import logging
+from importlib_metadata import PackageNotFoundError, version
 from typing import Any, Dict
 
 __version__ = "4.2.1"
@@ -61,6 +63,7 @@ __all__ = [
     "exceptions",
     "interface",
     "interfaces",
+    "io",
     "listener",
     "logconvert",
     "log",
@@ -74,10 +77,6 @@ __all__ = [
     "util",
     "viewer",
 ]
-
-log = logging.getLogger("can")
-
-rc: Dict[str, Any] = {}
 
 from . import typechecking  # isort:skip
 from . import util  # isort:skip
@@ -126,3 +125,10 @@ from .message import Message
 from .notifier import Notifier
 from .thread_safe_bus import ThreadSafeBus
 from .util import set_logging_level
+
+with contextlib.suppress(PackageNotFoundError):
+    __version__ = version("python-can")
+
+log = logging.getLogger("can")
+
+rc: Dict[str, Any] = {}

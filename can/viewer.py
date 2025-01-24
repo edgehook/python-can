@@ -27,30 +27,29 @@ import os
 import struct
 import sys
 import time
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple
 
 from can import __version__
-
-from .logger import (
+from can.logger import (
     _append_filter_argument,
     _create_base_argument_parser,
     _create_bus,
     _parse_additional_config,
-    _parse_filters,
 )
+from can.typechecking import TAdditionalCliArgs, TDataStructs
 
 logger = logging.getLogger("can.viewer")
 
 try:
     import curses
-    from curses.ascii import ESC as KEY_ESC
-    from curses.ascii import SP as KEY_SPACE
+    from curses.ascii import ESC as KEY_ESC  # type: ignore[attr-defined,unused-ignore]
+    from curses.ascii import SP as KEY_SPACE  # type: ignore[attr-defined,unused-ignore]
 except ImportError:
     # Probably on Windows while windows-curses is not installed (e.g. in PyPy)
     logger.warning(
         "You won't be able to use the viewer program without curses installed!"
     )
-    curses = None  # type: ignore
+    curses = None  # type: ignore[assignment]
 
 
 class CanViewer:  # pylint: disable=too-many-instance-attributes
@@ -391,7 +390,9 @@ class SmartFormatter(argparse.HelpFormatter):
             return super()._fill_text(text, width, indent)
 
 
-def parse_args(args: List[str]) -> Tuple:
+def _parse_viewer_args(
+    args: List[str],
+) -> Tuple[argparse.Namespace, TDataStructs, TAdditionalCliArgs]:
     # Parse command line arguments
     parser = argparse.ArgumentParser(
         "python -m can.viewer",
@@ -489,8 +490,6 @@ def parse_args(args: List[str]) -> Tuple:
 
     parsed_args, unknown_args = parser.parse_known_args(args)
 
-    can_filters = _parse_filters(parsed_args)
-
     # Dictionary used to convert between Python values and C structs represented as Python strings.
     # If the value is 'None' then the message does not contain any data package.
     #
@@ -511,9 +510,7 @@ def parse_args(args: List[str]) -> Tuple:
     # similarly the values
     # are divided by the value in order to convert from real units to raw integer values.
 
-    data_structs: Dict[
-        Union[int, Tuple[int, ...]], Union[struct.Struct, Tuple, None]
-    ] = {}
+    data_structs: TDataStructs = {}
     if parsed_args.decode:
         if os.path.isfile(parsed_args.decode[0]):
             with open(parsed_args.decode[0], encoding="utf-8") as f:
@@ -537,24 +534,20 @@ def parse_args(args: List[str]) -> Tuple:
                     scaling.append(float(t))
 
             if scaling:
-                data_structs[key] = (struct.Struct(fmt),) + tuple(scaling)
+                data_structs[key] = (struct.Struct(fmt), *scaling)
             else:
                 data_structs[key] = struct.Struct(fmt)
 
     additional_config = _parse_additional_config(
         [*parsed_args.extra_args, *unknown_args]
     )
-    return parsed_args, can_filters, data_structs, additional_config
+    return parsed_args, data_structs, additional_config
 
 
 def main() -> None:
-    parsed_args, can_filters, data_structs, additional_config = parse_args(sys.argv[1:])
-
-    if can_filters:
-        additional_config.update({"can_filters": can_filters})
+    parsed_args, data_structs, additional_config = _parse_viewer_args(sys.argv[1:])
     bus = _create_bus(parsed_args, **additional_config)
-
-    curses.wrapper(CanViewer, bus, data_structs)
+    curses.wrapper(CanViewer, bus, data_structs)  # type: ignore[attr-defined,unused-ignore]
 
 
 if __name__ == "__main__":

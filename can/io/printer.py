@@ -33,7 +33,7 @@ class Printer(MessageWriter):
         """
         :param file: An optional path-like object or a file-like object to "print"
                      to instead of writing to standard out (stdout).
-                     If this is a file-like object, is has to be opened in text
+                     If this is a file-like object, it has to be opened in text
                      write mode, not binary write mode.
         :param append: If set to `True` messages, are appended to the file,
                        else the file is truncated
@@ -46,7 +46,7 @@ class Printer(MessageWriter):
         if self.write_to_file:
             cast(TextIO, self.file).write(str(msg) + "\n")
         else:
-            print(msg)
+            print(msg)  # noqa: T201
 
     def file_size(self) -> int:
         """Return an estimate of the current file size in bytes."""

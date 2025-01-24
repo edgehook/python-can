@@ -8,7 +8,21 @@ import threading
 from abc import ABC, ABCMeta, abstractmethod
 from enum import Enum, auto
 from time import time
-from typing import Any, Callable, Iterator, List, Optional, Sequence, Tuple, Union, cast
+from types import TracebackType
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+    cast,
+)
+
+from typing_extensions import Self
 
 import can
 import can.typechecking
@@ -30,7 +44,8 @@ class CanProtocol(Enum):
     """The CAN protocol type supported by a :class:`can.BusABC` instance"""
 
     CAN_20 = auto()
-    CAN_FD = auto()
+    CAN_FD = auto()  # ISO Mode
+    CAN_FD_NON_ISO = auto()
     CAN_XL = auto()
 
 
@@ -51,7 +66,8 @@ class BusABC(metaclass=ABCMeta):
     #: Log level for received messages
     RECV_LOGGING_LEVEL = 9
 
-    _is_shutdown: bool = False
+    #: Assume that no cleanup is needed until something was initialized
+    _is_shutdown: bool = True
     _can_protocol: CanProtocol = CanProtocol.CAN_20
 
     @abstractmethod
@@ -83,6 +99,10 @@ class BusABC(metaclass=ABCMeta):
         """
         self._periodic_tasks: List[_SelfRemovingCyclicTask] = []
         self.set_filters(can_filters)
+        # Flip the class default value when the constructor finishes.  That
+        # usually means the derived class constructor was also successful,
+        # since it calls this parent constructor last.
+        self._is_shutdown: bool = False
 
     def __str__(self) -> str:
         return self.channel_info
@@ -195,6 +215,7 @@ class BusABC(metaclass=ABCMeta):
         period: float,
         duration: Optional[float] = None,
         store_task: bool = True,
+        autostart: bool = True,
         modifier_callback: Optional[Callable[[Message], None]] = None,
     ) -> can.broadcastmanager.CyclicSendTaskABC:
         """Start sending messages at a given period on this bus.
@@ -217,6 +238,10 @@ class BusABC(metaclass=ABCMeta):
         :param store_task:
             If True (the default) the task will be attached to this Bus instance.
             Disable to instead manage tasks manually.
+        :param autostart:
+            If True (the default) the sending task will immediately start after creation.
+            Otherwise, the task has to be started by calling the
+            tasks :meth:`~can.RestartableCyclicTaskABC.start` method on it.
         :param modifier_callback:
             Function which should be used to modify each message's data before
             sending. The callback modifies the :attr:`~can.Message.data` of the
@@ -252,7 +277,9 @@ class BusABC(metaclass=ABCMeta):
         # Create a backend specific task; will be patched to a _SelfRemovingCyclicTask later
         task = cast(
             _SelfRemovingCyclicTask,
-            self._send_periodic_internal(msgs, period, duration, modifier_callback),
+            self._send_periodic_internal(
+                msgs, period, duration, autostart, modifier_callback
+            ),
         )
         # we wrap the task's stop method to also remove it from the Bus's list of tasks
         periodic_tasks = self._periodic_tasks
@@ -267,7 +294,7 @@ class BusABC(metaclass=ABCMeta):
                     pass  # allow the task to be already removed
             original_stop_method()
 
-        task.stop = wrapped_stop_method  # type: ignore
+        task.stop = wrapped_stop_method  # type: ignore[method-assign]
 
         if store_task:
             self._periodic_tasks.append(task)
@@ -279,6 +306,7 @@ class BusABC(metaclass=ABCMeta):
         msgs: Union[Sequence[Message], Message],
         period: float,
         duration: Optional[float] = None,
+        autostart: bool = True,
         modifier_callback: Optional[Callable[[Message], None]] = None,
     ) -> can.broadcastmanager.CyclicSendTaskABC:
         """Default implementation of periodic message sending using threading.
@@ -292,6 +320,10 @@ class BusABC(metaclass=ABCMeta):
         :param duration:
             The duration between sending each message at the given rate. If
             no duration is provided, the task will continue indefinitely.
+        :param autostart:
+            If True (the default) the sending task will immediately start after creation.
+            Otherwise, the task has to be started by calling the
+            tasks :meth:`~can.RestartableCyclicTaskABC.start` method on it.
         :return:
             A started task instance. Note the task can be stopped (and
             depending on the backend modified) by calling the
@@ -308,6 +340,7 @@ class BusABC(metaclass=ABCMeta):
             messages=msgs,
             period=period,
             duration=duration,
+            autostart=autostart,
             modifier_callback=modifier_callback,
         )
         return task
@@ -387,7 +420,8 @@ class BusABC(metaclass=ABCMeta):
             messages based only on the arbitration ID and mask.
         """
         self._filters = filters or None
-        self._apply_filters(self._filters)
+        with contextlib.suppress(NotImplementedError):
+            self._apply_filters(self._filters)
 
     def _apply_filters(self, filters: Optional[can.typechecking.CanFilters]) -> None:
         """
@@ -397,6 +431,7 @@ class BusABC(metaclass=ABCMeta):
         :param filters:
             See :meth:`~can.BusABC.set_filters` for details.
         """
+        raise NotImplementedError
 
     def _matches_filters(self, msg: Message) -> bool:
         """Checks whether the given message matches at least one of the
@@ -436,6 +471,7 @@ class BusABC(metaclass=ABCMeta):
 
     def flush_tx_buffer(self) -> None:
         """Discard every message that may be queued in the output buffer(s)."""
+        raise NotImplementedError
 
     def shutdown(self) -> None:
         """
@@ -450,10 +486,15 @@ class BusABC(metaclass=ABCMeta):
         self._is_shutdown = True
         self.stop_all_periodic_tasks()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[TracebackType],
+    ) -> None:
         self.shutdown()
 
     def __del__(self) -> None:

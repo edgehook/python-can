@@ -110,10 +110,10 @@ class Message:  # pylint: disable=too-many-instance-attributes; OK for a datacla
     def __str__(self) -> str:
         field_strings = [f"Timestamp: {self.timestamp:>15.6f}"]
         if self.is_extended_id:
-            arbitration_id_string = f"ID: {self.arbitration_id:08x}"
+            arbitration_id_string = f"{self.arbitration_id:08x}"
         else:
-            arbitration_id_string = f"ID: {self.arbitration_id:04x}"
-        field_strings.append(arbitration_id_string.rjust(12, " "))
+            arbitration_id_string = f"{self.arbitration_id:03x}"
+        field_strings.append(f"ID: {arbitration_id_string:>8}")
 
         flag_string = " ".join(
             [
@@ -130,12 +130,12 @@ class Message:  # pylint: disable=too-many-instance-attributes; OK for a datacla
         field_strings.append(flag_string)
 
         field_strings.append(f"DL: {self.dlc:2d}")
-        data_strings = []
+        data_strings = ""
         if self.data is not None:
-            for index in range(0, min(self.dlc, len(self.data))):
-                data_strings.append(f"{self.data[index]:02x}")
+            hex_str = self.data[: min(self.dlc, len(self.data))].hex()
+            data_strings = " ".join(hex_str[i:i+2] for i in range(0, len(hex_str), 2))
         if data_strings:  # if not empty
-            field_strings.append(" ".join(data_strings).ljust(24, " "))
+            field_strings.append(data_strings.ljust(24, " "))
         else:
             field_strings.append(" " * 24)
 
@@ -245,7 +245,7 @@ class Message:  # pylint: disable=too-many-instance-attributes; OK for a datacla
         if self.is_remote_frame:
             if self.is_error_frame:
                 raise ValueError(
-                    "a message cannot be a remote and an error frame at the sane time"
+                    "a message cannot be a remote and an error frame at the same time"
                 )
             if self.is_fd:
                 raise ValueError("CAN FD does not support remote frames")

@@ -11,15 +11,12 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Callable, Dict, Generator, List, Optional, TextIO, Union
+from typing import Any, Callable, Dict, Generator, Optional, TextIO, Tuple, Union
 
 from ..message import Message
 from ..typechecking import StringPathLike
-from ..util import channel2int, dlc2len, len2dlc
-from .generic import (
-    TextIOMessageReader,
-    TextIOMessageWriter,
-)
+from ..util import channel2int, len2dlc
+from .generic import TextIOMessageReader, TextIOMessageWriter
 
 logger = logging.getLogger("can.io.trc")
 
@@ -49,6 +46,7 @@ class TRCReader(TextIOMessageReader):
     def __init__(
         self,
         file: Union[StringPathLike, TextIO],
+        **kwargs: Any,
     ) -> None:
         """
         :param file: a path-like object or as file-like object to read from
@@ -57,24 +55,35 @@ class TRCReader(TextIOMessageReader):
         """
         super().__init__(file, mode="r")
         self.file_version = TRCFileVersion.UNKNOWN
-        self.start_time: Optional[datetime] = None
+        self._start_time: float = 0
         self.columns: Dict[str, int] = {}
+        self._num_columns = -1
 
         if not self.file:
             raise ValueError("The given file cannot be None")
 
-        self._parse_cols: Callable[[List[str]], Optional[Message]] = lambda x: None
+        self._parse_cols: Callable[[Tuple[str, ...]], Optional[Message]] = (
+            lambda x: None
+        )
+
+    @property
+    def start_time(self) -> Optional[datetime]:
+        if self._start_time:
+            return datetime.fromtimestamp(self._start_time, timezone.utc)
+        return None
 
     def _extract_header(self):
         line = ""
-        for line in self.file:
-            line = line.strip()
+        for _line in self.file:
+            line = _line.strip()
             if line.startswith(";$FILEVERSION"):
                 logger.debug("TRCReader: Found file version '%s'", line)
                 try:
                     file_version = line.split("=")[1]
                     if file_version == "1.1":
                         self.file_version = TRCFileVersion.V1_1
+                    elif file_version == "1.3":
+                        self.file_version = TRCFileVersion.V1_3
                     elif file_version == "2.0":
                         self.file_version = TRCFileVersion.V2_0
                     elif file_version == "2.1":
@@ -86,9 +95,10 @@ class TRCReader(TextIOMessageReader):
             elif line.startswith(";$STARTTIME"):
                 logger.debug("TRCReader: Found start time '%s'", line)
                 try:
-                    self.start_time = datetime(
-                        1899, 12, 30, tzinfo=timezone.utc
-                    ) + timedelta(days=float(line.split("=")[1]))
+                    self._start_time = (
+                        datetime(1899, 12, 30, tzinfo=timezone.utc)
+                        + timedelta(days=float(line.split("=")[1]))
+                    ).timestamp()
                 except IndexError:
                     logger.debug("TRCReader: Failed to parse start time")
             elif line.startswith(";$COLUMNS"):
@@ -96,6 +106,7 @@ class TRCReader(TextIOMessageReader):
                 try:
                     columns = line.split("=")[1].split(",")
                     self.columns = {column: columns.index(column) for column in columns}
+                    self._num_columns = len(columns) - 1
                 except IndexError:
                     logger.debug("TRCReader: Failed to parse columns")
             elif line.startswith(";"):
@@ -104,7 +115,7 @@ class TRCReader(TextIOMessageReader):
                 break
 
         if self.file_version >= TRCFileVersion.V1_1:
-            if self.start_time is None:
+            if self._start_time is None:
                 raise ValueError("File has no start time information")
 
         if self.file_version >= TRCFileVersion.V2_0:
@@ -115,19 +126,21 @@ class TRCReader(TextIOMessageReader):
             logger.info(
                 "TRCReader: No file version was found, so version 1.0 is assumed"
             )
-            self._parse_cols = self._parse_msg_V1_0
+            self._parse_cols = self._parse_msg_v1_0
         elif self.file_version == TRCFileVersion.V1_0:
-            self._parse_cols = self._parse_msg_V1_0
+            self._parse_cols = self._parse_msg_v1_0
         elif self.file_version == TRCFileVersion.V1_1:
-            self._parse_cols = self._parse_cols_V1_1
+            self._parse_cols = self._parse_cols_v1_1
+        elif self.file_version == TRCFileVersion.V1_3:
+            self._parse_cols = self._parse_cols_v1_3
         elif self.file_version in [TRCFileVersion.V2_0, TRCFileVersion.V2_1]:
-            self._parse_cols = self._parse_cols_V2_x
+            self._parse_cols = self._parse_cols_v2_x
         else:
             raise NotImplementedError("File version not fully implemented for reading")
 
         return line
 
-    def _parse_msg_V1_0(self, cols: List[str]) -> Optional[Message]:
+    def _parse_msg_v1_0(self, cols: Tuple[str, ...]) -> Optional[Message]:
         arbit_id = cols[2]
         if arbit_id == "FFFFFFFF":
             logger.info("TRCReader: Dropping bus info line")
@@ -142,16 +155,11 @@ class TRCReader(TextIOMessageReader):
         msg.data = bytearray([int(cols[i + 4], 16) for i in range(msg.dlc)])
         return msg
 
-    def _parse_msg_V1_1(self, cols: List[str]) -> Optional[Message]:
+    def _parse_msg_v1_1(self, cols: Tuple[str, ...]) -> Optional[Message]:
         arbit_id = cols[3]
 
         msg = Message()
-        if isinstance(self.start_time, datetime):
-            msg.timestamp = (
-                self.start_time + timedelta(milliseconds=float(cols[1]))
-            ).timestamp()
-        else:
-            msg.timestamp = float(cols[1]) / 1000
+        msg.timestamp = float(cols[1]) / 1000 + self._start_time
         msg.arbitration_id = int(arbit_id, 16)
         msg.is_extended_id = len(arbit_id) > 4
         msg.channel = 1
@@ -160,7 +168,20 @@ class TRCReader(TextIOMessageReader):
         msg.is_rx = cols[2] == "Rx"
         return msg
 
-    def _parse_msg_V2_x(self, cols: List[str]) -> Optional[Message]:
+    def _parse_msg_v1_3(self, cols: Tuple[str, ...]) -> Optional[Message]:
+        arbit_id = cols[4]
+
+        msg = Message()
+        msg.timestamp = float(cols[1]) / 1000 + self._start_time
+        msg.arbitration_id = int(arbit_id, 16)
+        msg.is_extended_id = len(arbit_id) > 4
+        msg.channel = int(cols[2])
+        msg.dlc = int(cols[6])
+        msg.data = bytearray([int(cols[i + 7], 16) for i in range(msg.dlc)])
+        msg.is_rx = cols[3] == "Rx"
+        return msg
+
+    def _parse_msg_v2_x(self, cols: Tuple[str, ...]) -> Optional[Message]:
         type_ = cols[self.columns["T"]]
         bus = self.columns.get("B", None)
 
@@ -169,43 +190,44 @@ class TRCReader(TextIOMessageReader):
             dlc = len2dlc(length)
         elif "L" in self.columns:
             dlc = int(cols[self.columns["L"]])
-            length = dlc2len(dlc)
         else:
             raise ValueError("No length/dlc columns present.")
 
         msg = Message()
-        if isinstance(self.start_time, datetime):
-            msg.timestamp = (
-                self.start_time + timedelta(milliseconds=float(cols[self.columns["O"]]))
-            ).timestamp()
-        else:
-            msg.timestamp = float(cols[1]) / 1000
+        msg.timestamp = float(cols[self.columns["O"]]) / 1000 + self._start_time
         msg.arbitration_id = int(cols[self.columns["I"]], 16)
         msg.is_extended_id = len(cols[self.columns["I"]]) > 4
         msg.channel = int(cols[bus]) if bus is not None else 1
         msg.dlc = dlc
-        msg.data = bytearray(
-            [int(cols[i + self.columns["D"]], 16) for i in range(length)]
-        )
+        if dlc:
+            msg.data = bytearray.fromhex(cols[self.columns["D"]])
         msg.is_rx = cols[self.columns["d"]] == "Rx"
-        msg.is_fd = type_ in ["FD", "FB", "FE", "BI"]
-        msg.bitrate_switch = type_ in ["FB", " FE"]
-        msg.error_state_indicator = type_ in ["FE", "BI"]
+        msg.is_fd = type_ in {"FD", "FB", "FE", "BI"}
+        msg.bitrate_switch = type_ in {"FB", "FE"}
+        msg.error_state_indicator = type_ in {"FE", "BI"}
 
         return msg
 
-    def _parse_cols_V1_1(self, cols: List[str]) -> Optional[Message]:
+    def _parse_cols_v1_1(self, cols: Tuple[str, ...]) -> Optional[Message]:
         dtype = cols[2]
         if dtype in ("Tx", "Rx"):
-            return self._parse_msg_V1_1(cols)
+            return self._parse_msg_v1_1(cols)
         else:
             logger.info("TRCReader: Unsupported type '%s'", dtype)
             return None
 
-    def _parse_cols_V2_x(self, cols: List[str]) -> Optional[Message]:
+    def _parse_cols_v1_3(self, cols: Tuple[str, ...]) -> Optional[Message]:
+        dtype = cols[3]
+        if dtype in ("Tx", "Rx"):
+            return self._parse_msg_v1_3(cols)
+        else:
+            logger.info("TRCReader: Unsupported type '%s'", dtype)
+            return None
+
+    def _parse_cols_v2_x(self, cols: Tuple[str, ...]) -> Optional[Message]:
         dtype = cols[self.columns["T"]]
-        if dtype in ["DT", "FD", "FB"]:
-            return self._parse_msg_V2_x(cols)
+        if dtype in {"DT", "FD", "FB", "FE", "BI"}:
+            return self._parse_msg_v2_x(cols)
         else:
             logger.info("TRCReader: Unsupported type '%s'", dtype)
             return None
@@ -213,7 +235,7 @@ class TRCReader(TextIOMessageReader):
     def _parse_line(self, line: str) -> Optional[Message]:
         logger.debug("TRCReader: Parse '%s'", line)
         try:
-            cols = line.split()
+            cols = tuple(line.split(maxsplit=self._num_columns))
             return self._parse_cols(cols)
         except IndexError:
             logger.warning("TRCReader: Failed to parse message '%s'", line)
@@ -265,6 +287,7 @@ class TRCWriter(TextIOMessageWriter):
         self,
         file: Union[StringPathLike, TextIO],
         channel: int = 1,
+        **kwargs: Any,
     ) -> None:
         """
         :param file: a path-like object or as file-like object to write to
@@ -289,7 +312,7 @@ class TRCWriter(TextIOMessageWriter):
         self._msg_fmt_string = self.FORMAT_MESSAGE_V1_0
         self._format_message = self._format_message_init
 
-    def _write_header_V1_0(self, start_time: datetime) -> None:
+    def _write_header_v1_0(self, start_time: datetime) -> None:
         lines = [
             ";##########################################################################",
             f";   {self.filepath}",
@@ -310,8 +333,10 @@ class TRCWriter(TextIOMessageWriter):
         ]
         self.file.writelines(line + "\n" for line in lines)
 
-    def _write_header_V2_1(self, start_time: datetime) -> None:
-        header_time = start_time - datetime(year=1899, month=12, day=30)
+    def _write_header_v2_1(self, start_time: datetime) -> None:
+        header_time = start_time - datetime(
+            year=1899, month=12, day=30, tzinfo=timezone.utc
+        )
         lines = [
             ";$FILEVERSION=2.1",
             f";$STARTTIME={header_time/timedelta(days=1)}",
@@ -367,12 +392,12 @@ class TRCWriter(TextIOMessageWriter):
 
     def write_header(self, timestamp: float) -> None:
         # write start of file header
-        start_time = datetime.utcfromtimestamp(timestamp)
+        start_time = datetime.fromtimestamp(timestamp, timezone.utc)
 
         if self.file_version == TRCFileVersion.V1_0:
-            self._write_header_V1_0(start_time)
+            self._write_header_v1_0(start_time)
         elif self.file_version == TRCFileVersion.V2_1:
-            self._write_header_V2_1(start_time)
+            self._write_header_v2_1(start_time)
         else:
             raise NotImplementedError("File format is not supported")
         self.header_written = True
@@ -405,7 +430,7 @@ class TRCWriter(TextIOMessageWriter):
         if msg.is_fd:
             logger.warning("TRCWriter: Logging CAN FD is not implemented")
             return
-        else:
-            serialized = self._format_message(msg, channel)
-            self.msgnr += 1
+
+        serialized = self._format_message(msg, channel)
+        self.msgnr += 1
         self.log_event(serialized, msg.timestamp)

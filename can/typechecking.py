@@ -1,20 +1,32 @@
 """Types for mypy type-checking
 """
+
 import gzip
+import struct
+import sys
 import typing
+
+if sys.version_info >= (3, 10):
+    from typing import TypeAlias
+else:
+    from typing_extensions import TypeAlias
+
+if sys.version_info >= (3, 12):
+    from typing import TypedDict
+else:
+    from typing_extensions import TypedDict
+
 
 if typing.TYPE_CHECKING:
     import os
 
-import typing_extensions
 
-
-class CanFilter(typing_extensions.TypedDict):
+class CanFilter(TypedDict):
     can_id: int
     can_mask: int
 
 
-class CanFilterExtended(typing_extensions.TypedDict):
+class CanFilterExtended(TypedDict):
     can_id: int
     can_mask: int
     extended: bool
@@ -41,8 +53,15 @@ AcceptedIOType = typing.Union[FileLike, StringPathLike]
 
 BusConfig = typing.NewType("BusConfig", typing.Dict[str, typing.Any])
 
+# Used by CLI scripts
+TAdditionalCliArgs: TypeAlias = typing.Dict[str, typing.Union[str, int, float, bool]]
+TDataStructs: TypeAlias = typing.Dict[
+    typing.Union[int, typing.Tuple[int, ...]],
+    typing.Union[struct.Struct, typing.Tuple, None],
+]
 
-class AutoDetectedConfig(typing_extensions.TypedDict):
+
+class AutoDetectedConfig(TypedDict):
     interface: str
     channel: Channel
 
@@ -50,7 +69,7 @@ class AutoDetectedConfig(typing_extensions.TypedDict):
 ReadableBytesLike = typing.Union[bytes, bytearray, memoryview]
 
 
-class BitTimingDict(typing_extensions.TypedDict):
+class BitTimingDict(TypedDict):
     f_clock: int
     brp: int
     tseg1: int
@@ -59,7 +78,7 @@ class BitTimingDict(typing_extensions.TypedDict):
     nof_samples: int
 
 
-class BitTimingFdDict(typing_extensions.TypedDict):
+class BitTimingFdDict(TypedDict):
     f_clock: int
     nom_brp: int
     nom_tseg1: int
