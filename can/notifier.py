@@ -120,7 +120,7 @@ class Notifier:
 
         while self._running:
             try:
-		msg = bus.recv(self.timeout)
+                msg = bus.recv(self.timeout)
                 if msg:
                     with self._lock:
                         handle_message(msg)
@@ -138,7 +138,7 @@ class Notifier:
                     logger.debug("suppressed exception: %s", exc)
 
     def _on_message_available(self, bus: BusABC) -> None:
-	msg = bus.recv(0)
+        msg = bus.recv(0)
         if msg:
             self._on_message_received(msg)
 

@@ -267,7 +267,8 @@ class ASCReader(TextIOMessageReader):
         for _line in self.file:
             line = _line.strip()
 
-            if trigger_match := ASC_TRIGGER_REGEX.match(line):
+            trigger_match = ASC_TRIGGER_REGEX.match(line)
+            if trigger_match:
                 datetime_str = trigger_match.group("datetime_string")
                 self.start_time = (
                     0.0

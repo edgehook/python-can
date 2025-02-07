@@ -245,7 +245,7 @@ def _create_bus_config(config: Dict[str, Any]) -> typechecking.BusConfig:
             raise ValueError("Port config must be inside 0-65535 range!")
 
     if "timing" not in config:
-	timing = _dict2timing(config)
+        timing = _dict2timing(config)
         if timing:
             config["timing"] = timing
 

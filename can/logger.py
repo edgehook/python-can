@@ -180,7 +180,7 @@ class _BitTimingAction(argparse.Action):
                     None, f"Invalid timing argument: {arg}"
                 ) from None
 
-	timing = _dict2timing(timing_dict)
+        timing = _dict2timing(timing_dict)
         if not (timing):
             err_msg = "Invalid --timing argument. Incomplete parameters."
             raise argparse.ArgumentError(None, err_msg)
