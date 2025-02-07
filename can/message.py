@@ -133,7 +133,9 @@ class Message:  # pylint: disable=too-many-instance-attributes; OK for a datacla
         data_strings = ""
         if self.data is not None:
             hex_str = self.data[: min(self.dlc, len(self.data))].hex()
-            data_strings = " ".join(hex_str[i:i+2] for i in range(0, len(hex_str), 2))
+            data_strings = " ".join(
+                hex_str[i : i + 2] for i in range(0, len(hex_str), 2)
+            )
         if data_strings:  # if not empty
             field_strings.append(data_strings.ljust(24, " "))
         else:

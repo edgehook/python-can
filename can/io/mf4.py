@@ -321,7 +321,6 @@ class MF4Reader(BinaryIOMessageReader):
     # NOTE: Readout based on the bus logging code from asammdf GUI
 
     class _CANDataFrameIterator(FrameIterator):
-
         def __init__(self, mdf: MDF4, group_index: int, start_timestamp: float):
             super().__init__(mdf, group_index, start_timestamp, "CAN_DataFrame")
 
@@ -361,7 +360,6 @@ class MF4Reader(BinaryIOMessageReader):
                     yield Message(**kv)
 
     class _CANErrorFrameIterator(FrameIterator):
-
         def __init__(self, mdf: MDF4, group_index: int, start_timestamp: float):
             super().__init__(mdf, group_index, start_timestamp, "CAN_ErrorFrame")
 
@@ -412,7 +410,6 @@ class MF4Reader(BinaryIOMessageReader):
                     yield Message(**kv)
 
     class _CANRemoteFrameIterator(FrameIterator):
-
         def __init__(self, mdf: MDF4, group_index: int, start_timestamp: float):
             super().__init__(mdf, group_index, start_timestamp, "CAN_RemoteFrame")
 

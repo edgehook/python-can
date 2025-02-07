@@ -62,9 +62,9 @@ class TRCReader(TextIOMessageReader):
         if not self.file:
             raise ValueError("The given file cannot be None")
 
-        self._parse_cols: Callable[[Tuple[str, ...]], Optional[Message]] = (
-            lambda x: None
-        )
+        self._parse_cols: Callable[
+            [Tuple[str, ...]], Optional[Message]
+        ] = lambda x: None
 
     @property
     def start_time(self) -> Optional[datetime]:

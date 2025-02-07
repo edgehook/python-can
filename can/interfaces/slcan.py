@@ -55,7 +55,6 @@ class slcanBus(BusABC):
 
     LINE_TERMINATOR = b"\r"
 
- 
     def __init__(
         self,
         channel: typechecking.ChannelStr,
@@ -153,7 +152,7 @@ class slcanBus(BusABC):
     def _set_bit_timing_fd(self, timing: BitTimingFd) -> None:
         nomStr = f"P{timing.nom_sjw:04d}{timing.nom_tseg1:04d}{timing.nom_tseg2:04d}{timing.nom_brp:04d}"
         dataStr = f"p{timing.data_sjw:04d}{timing.data_tseg1:04d}{timing.data_tseg2:04d}{timing.data_brp:04d}"
-		
+
         self.close()
         self._write(nomStr)
         self._write(dataStr)
@@ -199,8 +198,8 @@ class slcanBus(BusABC):
                 ok_index = self._buffer.find(self._OK)
                 error_index = self._buffer.find(self._ERROR)
                 if error_index != -1 or ok_index != -1:
-                    first_marker_index = (
-                        min(idx for idx in [error_index, ok_index] if idx != -1)
+                    first_marker_index = min(
+                        idx for idx in [error_index, ok_index] if idx != -1
                     )
 
                     string = self._buffer[: first_marker_index + 1].decode()
@@ -239,15 +238,15 @@ class slcanBus(BusABC):
                 return num
             elif num == 9:
                 return 12
-        elif hex_dlc == 'A':
+        elif hex_dlc == "A":
             return 16
-        elif hex_dlc == 'B':
+        elif hex_dlc == "B":
             return 20
-        elif hex_dlc == 'C':
+        elif hex_dlc == "C":
             return 24
-        elif hex_dlc == 'D':
+        elif hex_dlc == "D":
             return 32
-        elif hex_dlc == 'E':
+        elif hex_dlc == "E":
             return 48
         return 64
 
@@ -335,25 +334,25 @@ class slcanBus(BusABC):
 
     def encode_dlc_hex(self, data_length: int) -> str:
         if 0 <= data_length <= 8:
-            return format(data_length, 'X')
+            return format(data_length, "X")
         elif data_length == 12:
-            return '9'
+            return "9"
         elif data_length == 16:
-            return 'A'
+            return "A"
         elif data_length == 20:
-            return 'B'
+            return "B"
         elif data_length == 24:
-            return 'C'
+            return "C"
         elif data_length == 32:
-            return 'D'
+            return "D"
         elif data_length == 48:
-            return 'E'
-        return 'F'
+            return "E"
+        return "F"
 
     def send(self, msg: Message, timeout: Optional[float] = None) -> None:
         if timeout != self.serialPortOrig.write_timeout:
             self.serialPortOrig.write_timeout = timeout
-		
+
         if msg.is_fd:
             dlc_hex = self.encode_dlc_hex(msg.dlc)
             if msg.bitrate_switch:
@@ -367,8 +366,8 @@ class slcanBus(BusABC):
                 else:
                     sendStr = f"d{msg.arbitration_id:03X}{dlc_hex}"
             sendStr += msg.data.hex().upper()
-            if dlc_hex == 'F' and msg.dlc < 64:
-                padding = '00' * (64 - msg.dlc)
+            if dlc_hex == "F" and msg.dlc < 64:
+                padding = "00" * (64 - msg.dlc)
                 sendStr += padding
         else:
             if msg.is_remote_frame:
